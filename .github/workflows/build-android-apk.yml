@@ -17,7 +17,7 @@ jobs:
         run: sudo apt-get update && sudo apt-get install -y build-essential git
 
       - name: Set up JDK 17
-        uses: actions/setup-java@v4
+        uses: actions/setup-java@v5
         with:
           distribution: temurin
           java-version: "17"
@@ -25,14 +25,17 @@ jobs:
       - name: Set up Android SDK and NDK
         uses: android-actions/setup-android@v3
         with:
-          api-level: "34"
-          build-tools-version: "34.0.0"
-          ndk-version: "26.1.10909125"
+          cmdline-tools-version: "16.0"
+          accept-android-sdk-licenses: true
+          packages: |
+            platforms;android-34
+            build-tools;34.0.0
+            ndk;26.1.10909125
 
       - name: Build MuPDF for Android arm64-v8a
         shell: bash
         run: |
-          git clone --recursive --depth 1 [https://git.ghostscript.com/mupdf.git](https://git.ghostscript.com/mupdf.git) mupdf-src
+          git clone --recursive --depth 1 https://git.ghostscript.com/mupdf.git mupdf-src
           NDK_TOOLCHAIN="$ANDROID_NDK_ROOT/toolchains/llvm/prebuilt/linux-x86_64/bin"
           make -C mupdf-src -j$(nproc) \
             CC="$NDK_TOOLCHAIN/aarch64-linux-android24-clang" \
