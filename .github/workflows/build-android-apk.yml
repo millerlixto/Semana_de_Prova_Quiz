@@ -1,66 +1,17 @@
 
-name: Build Android APK (MuPDF + Gemini Quiz)
-
-on:
-  workflow_dispatch:
-  push:
-    branches: [ "main" ]
-
-jobs:
-  build-apk:
-    runs-on: ubuntu-latest
-
-    steps:
-      - name: Checkout repository
-        uses: actions/checkout@v4
-
-      - name: Install build tools for MuPDF
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y build-essential git
-
-      - name: Set up JDK 17
-        uses: actions/setup-java@v5
-        with:
-          distribution: temurin
-          java-version: "17"
-
-      - name: Set up Android SDK
-        uses: android-actions/setup-android@v4
-        with:
-          packages: 'platform-tools'
-          accept-android-sdk-licenses: true
-
-      - name: Install Android SDK and NDK packages
-        shell: bash
-        run: |
-          set -e
-
-          SDK_ROOT="${ANDROID_SDK_ROOT:-${ANDROID_HOME:-/usr/local/lib/android/sdk}}"
-
-          SDKMANAGER="$(command -v sdkmanager)"
-
-          echo "Android SDK: $SDK_ROOT"
-          echo "SDK Manager: $SDKMANAGER"
-
-          "$SDKMANAGER" --sdk_root="$SDK_ROOT" \
-            "platforms;android-34" \
-            "build-tools;34.0.0" \
-            "ndk;26.1.10909125"
-
-          echo "ANDROID_SDK_ROOT=$SDK_ROOT" >> "$GITHUB_ENV"
-          echo "ANDROID_NDK_ROOT=$SDK_ROOT/ndk/26.1.10909125" >> "$GITHUB_ENV"
-          echo "ANDROID_NDK_HOME=$SDK_ROOT/ndk/26.1.10909125" >> "$GITHUB_ENV"
-
       - name: Build MuPDF for Android arm64-v8a
         shell: bash
         run: |
           set -e
 
-          git clone --recursive --depth 1 \
-            https://git.ghostscript.com/mupdf.git mupdf-src
+          echo "Baixando MuPDF do GitHub..."
+
+          git clone --depth 1 --recurse-submodules \
+            https://github.com/ArtifexSoftware/mupdf.git mupdf-src
 
           NDK_TOOLCHAIN="$ANDROID_NDK_ROOT/toolchains/llvm/prebuilt/linux-x86_64/bin"
+
+          echo "Compilando MuPDF para ARM64..."
 
           make -C mupdf-src -j$(nproc) \
             CC="$NDK_TOOLCHAIN/aarch64-linux-android24-clang" \
@@ -70,68 +21,9 @@ jobs:
             build=release \
             libs
 
-          ls -la mupdf-src/build/release/libmupdf.a
-
-      - name: Install Qt for Android
-        uses: jurplel/install-qt-action@v4
-        with:
-          version: "6.7.3"
-          host: "linux"
-          target: "android"
-          archives: "qtbase qtdeclarative"
-          modules: "qtshadertools qtsvg"
-          android-abis: "arm64-v8a"
-          aqtinstall-args: "--external"
-          extra: "--email ${{ secrets.QT_ACCOUNT }} --pw ${{ secrets.QT_PASSWORD }}"
-
-      - name: Configure and build with CMake + MuPDF
-        shell: bash
-        run: |
-          set -e
-
-          QT_ANDROID_BIN=$(find / -name "qt-cmake" -path "*android*" 2>/dev/null | head -n 1)
-
-          MUPDF_LIB=$(find "$(pwd)/mupdf-src/build" \
-            -name "libmupdf.a" | head -n 1)
-
-          if [ -z "$QT_ANDROID_BIN" ]; then
-            echo "ERROR: qt-cmake não encontrado."
+          if [ ! -f mupdf-src/build/release/libmupdf.a ]; then
+            echo "ERRO: biblioteca libmupdf.a não foi gerada."
             exit 1
           fi
 
-          if [ -z "$MUPDF_LIB" ]; then
-            echo "ERROR: libmupdf.a não encontrado."
-            exit 1
-          fi
-
-          "$QT_ANDROID_BIN" -S . -B build-android \
-            -DANDROID_ABI=arm64-v8a \
-            -DENABLE_MUPDF=ON \
-            -DMUPDF_INCLUDE_DIR="$(pwd)/mupdf-src/include" \
-            -DMUPDF_LIBRARY="$MUPDF_LIB"
-
-          cmake --build build-android --parallel
-
-      - name: Package APK with androiddeployqt
-        shell: bash
-        run: |
-          set -e
-
-          ANDROIDDEPLOYQT=$(find / -name "androiddeployqt" 2>/dev/null | head -n 1)
-
-          if [ -z "$ANDROIDDEPLOYQT" ]; then
-            echo "ERROR: androiddeployqt não encontrado."
-            exit 1
-          fi
-
-          "$ANDROIDDEPLOYQT" \
-            --input build-android/android-quiz_frontend-deployment-settings.json \
-            --output build-android/apk-out \
-            --apk
-
-      - name: Upload APK artifact
-        uses: actions/upload-artifact@v4
-        with:
-          name: gemini-quiz-mupdf-apk
-          path: build-android/apk-out/build/outputs/apk/debug/*.apk
-          if-no-files-found: error
+          echo "MuPDF compilado com sucesso!"
