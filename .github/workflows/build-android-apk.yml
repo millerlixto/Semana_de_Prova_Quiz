@@ -16,8 +16,7 @@ jobs:
       - name: Install build dependencies
         run: |
           sudo apt-get update
-          sudo apt-get install -y build-essential git cmake ninja-build libgl1-mesa-dev
-          sudo apt-get install -y libicu73 || sudo apt-get install -y libicu-dev
+          sudo apt-get install -y build-essential git cmake ninja-build curl libgl1-mesa-dev
 
       - name: Set up Java
         uses: actions/setup-java@v5
@@ -86,6 +85,18 @@ jobs:
           cache: false
           install-deps: true
 
+      - name: Install ICU 73 libraries for Qt host tools
+        shell: bash
+        run: |
+          mkdir -p /tmp/icu73/extracted
+          curl -fsSL http://archive.ubuntu.com/ubuntu/pool/main/i/icu/libicu73_73.2-2ubuntu3_amd64.deb -o /tmp/icu73/libicu73.deb || \
+          curl -fsSL http://security.ubuntu.com/ubuntu/pool/main/i/icu/libicu73_73.2-2ubuntu3.1_amd64.deb -o /tmp/icu73/libicu73.deb || \
+          curl -fsSL http://archive.ubuntu.com/ubuntu/pool/main/i/icu/libicu73_73.2-2ubuntu3.2_amd64.deb -o /tmp/icu73/libicu73.deb
+          dpkg-deb -x /tmp/icu73/libicu73.deb /tmp/icu73/extracted
+          sudo cp -a /tmp/icu73/extracted/usr/lib/x86_64-linux-gnu/libicu*.so.73* /usr/local/lib/
+          sudo ldconfig
+          ls -la /usr/local/lib/libicui18n.so.73*
+
       - name: Verify Qt installation
         run: |
           echo "Qt root: $QT_ROOT_DIR"
@@ -103,7 +114,7 @@ jobs:
         run: |
           QT_ANDROID_BIN=$(find "$QT_ROOT_DIR" -name qt-cmake -type f | head -n 1)
           QT_GCC_LIB=$(find / -path "*6.7.3/gcc_64/lib" -type d 2>/dev/null | head -n 1)
-          export LD_LIBRARY_PATH="${QT_GCC_LIB}:${LD_LIBRARY_PATH}"
+          export LD_LIBRARY_PATH="/usr/local/lib:${QT_GCC_LIB}:${LD_LIBRARY_PATH}"
 
           MUPDF_LIB=$(find "$(pwd)/mupdf-src/build" -name libmupdf.a | head -n 1)
 
@@ -131,7 +142,7 @@ jobs:
       - name: Build Android project
         run: |
           QT_GCC_LIB=$(find / -path "*6.7.3/gcc_64/lib" -type d 2>/dev/null | head -n 1)
-          export LD_LIBRARY_PATH="${QT_GCC_LIB}:${LD_LIBRARY_PATH}"
+          export LD_LIBRARY_PATH="/usr/local/lib:${QT_GCC_LIB}:${LD_LIBRARY_PATH}"
           cmake --build build-android --parallel
 
       - name: Generate APK
