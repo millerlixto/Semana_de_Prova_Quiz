@@ -12,87 +12,67 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
-      # 1. Baixar o projeto
       - name: Checkout repository
         uses: actions/checkout@v4
 
-      # 2. Instalar ferramentas Linux
-      - name: Install build tools for MuPDF
+      - name: Install build dependencies
         run: |
           sudo apt-get update
-          sudo apt-get install -y build-essential git
+          sudo apt-get install -y build-essential git cmake ninja-build
 
-      # 3. Configurar Java
-      - name: Set up JDK 17
+      - name: Set up Java
         uses: actions/setup-java@v5
         with:
           distribution: temurin
           java-version: "17"
 
-      # 4. Configurar Android SDK
       - name: Set up Android SDK
         uses: android-actions/setup-android@v4
-        with:
-          packages: platform-tools
-          accept-android-sdk-licenses: true
 
-      # 5. Instalar Android API e NDK
-      - name: Install Android SDK and NDK packages
-        shell: bash
+      - name: Install Android SDK packages
         run: |
-          set -e
-
-          SDK_ROOT="${ANDROID_SDK_ROOT:-${ANDROID_HOME:-/usr/local/lib/android/sdk}}"
-          SDKMANAGER="$(command -v sdkmanager)"
-
-          echo "Android SDK: $SDK_ROOT"
-
-          "$SDKMANAGER" --sdk_root="$SDK_ROOT" \
+          sdkmanager --install \
+            "platform-tools" \
             "platforms;android-34" \
             "build-tools;34.0.0" \
             "ndk;26.1.10909125"
 
-          echo "ANDROID_SDK_ROOT=$SDK_ROOT" >> "$GITHUB_ENV"
-          echo "ANDROID_NDK_ROOT=$SDK_ROOT/ndk/26.1.10909125" >> "$GITHUB_ENV"
-          echo "ANDROID_NDK_HOME=$SDK_ROOT/ndk/26.1.10909125" >> "$GITHUB_ENV"
+          echo "ANDROID_SDK_ROOT=$ANDROID_HOME" >> "$GITHUB_ENV"
+          echo "ANDROID_NDK_ROOT=$ANDROID_HOME/ndk/26.1.10909125" >> "$GITHUB_ENV"
+          echo "ANDROID_NDK_HOME=$ANDROID_HOME/ndk/26.1.10909125" >> "$GITHUB_ENV"
 
-      # 6. Baixar e compilar MuPDF
-      - name: Build MuPDF for Android arm64-v8a
-        shell: bash
+      - name: Clone MuPDF
         run: |
-          set -e
-
-          echo "Downloading MuPDF..."
-
           git clone --depth 1 --recurse-submodules \
             https://github.com/ArtifexSoftware/mupdf.git mupdf-src
 
-          NDK_TOOLCHAIN="$ANDROID_NDK_ROOT/toolchains/llvm/prebuilt/linux-x86_64/bin"
+      - name: Build MuPDF for Android
+        working-directory: mupdf-src
+        run: |
+          export NDK="$ANDROID_NDK_ROOT"
+          export ANDROID_NDK="$ANDROID_NDK_ROOT"
+          export PATH="$NDK/toolchains/llvm/prebuilt/linux-x86_64/bin:$PATH"
 
-          echo "Building MuPDF..."
-
-          make -C mupdf-src -j$(nproc) \
-            CC="$NDK_TOOLCHAIN/aarch64-linux-android24-clang" \
-            AR="$NDK_TOOLCHAIN/llvm-ar" \
-            RANLIB="$NDK_TOOLCHAIN/llvm-ranlib" \
-            USE_SYSTEM_LIBS=no \
+          make -j"$(nproc)" \
             build=release \
+            OS=Android \
+            ARCH=arm64 \
+            CROSS_COMPILE=aarch64-linux-android- \
+            CC=aarch64-linux-android24-clang \
+            AR=llvm-ar \
+            RANLIB=llvm-ranlib \
+            USE_SYSTEM_LIBS=no \
             libs
 
-          if [ ! -f mupdf-src/build/release/libmupdf.a ]; then
-            echo "ERROR: libmupdf.a not generated."
-            exit 1
-          fi
+          find build -name "libmupdf.a" -print
 
-          echo "MuPDF build completed."
+          test -f build/release/libmupdf.a
 
-      # 7. Configurar Python
-      - name: Set up Python for Qt installer
-        uses: actions/setup-python@v6
+      - name: Set up Python
+        uses: actions/setup-python@v5
         with:
           python-version: "3.13"
 
-      # 8. Instalar Qt para Android ARM64
       - name: Install Qt for Android
         uses: jurplel/install-qt-action@v4.4.1
         with:
@@ -100,71 +80,69 @@ jobs:
           host: all_os
           target: android
           arch: android_arm64_v8a
-          archives: "qtbase qtdeclarative"
-          modules: "qtsvg qtshadertools"
+          archives: "qtbase qtdeclarative qtsvg"
+          modules: "qtshadertools"
           aqtversion: "==3.3.0"
           setup-python: false
           cache: false
           install-deps: true
 
-      # 9. Verificar instalação do Qt
       - name: Verify Qt installation
-        shell: bash
         run: |
-          set -e
-
           echo "Qt root: $QT_ROOT_DIR"
           echo "Qt host: $QT_HOST_PATH"
 
           if [ ! -d "$QT_ROOT_DIR" ]; then
-            echo "ERROR: Qt installation directory not found."
+            echo "Erro: diretório do Qt não encontrado."
             exit 1
           fi
 
           find "$QT_ROOT_DIR" -name qt-cmake -type f
+          find "$QT_ROOT_DIR" -name androiddeployqt -type f
 
-      # 10. Configurar e compilar o projeto
-      - name: Configure and build with CMake + MuPDF
-        shell: bash
+      - name: Configure project with CMake
         run: |
-          set -e
-
           QT_ANDROID_BIN=$(find "$QT_ROOT_DIR" -name qt-cmake -type f | head -n 1)
-
-          MUPDF_LIB=$(find "$(pwd)/mupdf-src/build" \
-            -name libmupdf.a | head -n 1)
+          MUPDF_LIB=$(find "$(pwd)/mupdf-src/build" -name libmupdf.a | head -n 1)
 
           if [ -z "$QT_ANDROID_BIN" ]; then
-            echo "ERROR: qt-cmake not found."
+            echo "Erro: qt-cmake não encontrado."
             exit 1
           fi
 
           if [ -z "$MUPDF_LIB" ]; then
-            echo "ERROR: libmupdf.a not found."
+            echo "Erro: libmupdf.a não encontrada."
             exit 1
           fi
 
-          echo "Qt CMake: $QT_ANDROID_BIN"
-          echo "MuPDF library: $MUPDF_LIB"
+          echo "Usando qt-cmake: $QT_ANDROID_BIN"
+          echo "Usando MuPDF: $MUPDF_LIB"
 
-          "$QT_ANDROID_BIN" -S . -B build-android \
+          "$QT_ANDROID_BIN" \
+            -S . \
+            -B build-android \
             -DANDROID_ABI=arm64-v8a \
             -DENABLE_MUPDF=ON \
             -DMUPDF_INCLUDE_DIR="$(pwd)/mupdf-src/include" \
             -DMUPDF_LIBRARY="$MUPDF_LIB"
 
+      - name: Build Android project
+        run: |
           cmake --build build-android --parallel
 
-      # 11. Gerar APK
-      - name: Package APK with androiddeployqt
-        shell: bash
+      - name: Generate APK
         run: |
-          set -e
-
           ANDROIDDEPLOYQT=$(find "$QT_ROOT_DIR" -name androiddeployqt -type f | head -n 1)
 
           if [ -z "$ANDROIDDEPLOYQT" ]; then
-            echo "ERROR: androiddeployqt not found."
+            echo "Erro: androiddeployqt não encontrado."
+            exit 1
+          fi
+
+          if [ ! -f build-android/android-quiz_frontend-deployment-settings.json ]; then
+            echo "Erro: arquivo de deployment do Android não encontrado."
+            echo "Arquivos disponíveis:"
+            find build-android -maxdepth 3 -type f
             exit 1
           fi
 
@@ -173,8 +151,7 @@ jobs:
             --output build-android/apk-out \
             --apk
 
-      # 12. Disponibilizar APK
-      - name: Upload APK artifact
+      - name: Upload APK
         uses: actions/upload-artifact@v4
         with:
           name: gemini-quiz-mupdf-apk
