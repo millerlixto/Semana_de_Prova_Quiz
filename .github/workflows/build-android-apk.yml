@@ -1,11 +1,9 @@
-
 name: Build Android APK (MuPDF + Gemini Quiz)
 
 on:
   workflow_dispatch:
   push:
-    branches:
-      - main
+    branches: [ "main" ]
 
 jobs:
   build-apk:
@@ -18,7 +16,8 @@ jobs:
       - name: Install build dependencies
         run: |
           sudo apt-get update
-          sudo apt-get install -y build-essential git cmake ninja-build
+          sudo apt-get install -y build-essential git cmake ninja-build libgl1-mesa-dev
+          sudo apt-get install -y libicu73 || sudo apt-get install -y libicu-dev
 
       - name: Set up Java
         uses: actions/setup-java@v5
@@ -103,6 +102,9 @@ jobs:
       - name: Configure project with CMake
         run: |
           QT_ANDROID_BIN=$(find "$QT_ROOT_DIR" -name qt-cmake -type f | head -n 1)
+          QT_GCC_LIB=$(find / -path "*6.7.3/gcc_64/lib" -type d 2>/dev/null | head -n 1)
+          export LD_LIBRARY_PATH="${QT_GCC_LIB}:${LD_LIBRARY_PATH}"
+
           MUPDF_LIB=$(find "$(pwd)/mupdf-src/build" -name libmupdf.a | head -n 1)
 
           if [ -z "$QT_ANDROID_BIN" ]; then
@@ -128,6 +130,8 @@ jobs:
 
       - name: Build Android project
         run: |
+          QT_GCC_LIB=$(find / -path "*6.7.3/gcc_64/lib" -type d 2>/dev/null | head -n 1)
+          export LD_LIBRARY_PATH="${QT_GCC_LIB}:${LD_LIBRARY_PATH}"
           cmake --build build-android --parallel
 
       - name: Generate APK
