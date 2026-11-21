@@ -86,7 +86,7 @@ jobs:
 
           echo "MuPDF build completed."
 
-      # 7. Configurar Python compatível com a instalação do Qt
+      # 7. Configurar Python
       - name: Set up Python for Qt installer
         uses: actions/setup-python@v6
         with:
@@ -94,25 +94,42 @@ jobs:
 
       # 8. Instalar Qt para Android ARM64
       - name: Install Qt for Android
-        uses: jurplel/install-qt-action@v4
+        uses: jurplel/install-qt-action@v4.4.1
         with:
           version: "6.7.3"
-          host: linux
+          host: all_os
           target: android
           arch: android_arm64_v8a
           archives: "qtbase qtdeclarative"
-          modules: "qtshadertools qtsvg"
+          modules: "qtsvg qtshadertools"
           aqtversion: "==3.3.0"
           setup-python: false
-          cache: true
+          cache: false
+          install-deps: true
 
-      # 9. Configurar e compilar o projeto
+      # 9. Verificar instalação do Qt
+      - name: Verify Qt installation
+        shell: bash
+        run: |
+          set -e
+
+          echo "Qt root: $QT_ROOT_DIR"
+          echo "Qt host: $QT_HOST_PATH"
+
+          if [ ! -d "$QT_ROOT_DIR" ]; then
+            echo "ERROR: Qt installation directory not found."
+            exit 1
+          fi
+
+          find "$QT_ROOT_DIR" -name qt-cmake -type f
+
+      # 10. Configurar e compilar o projeto
       - name: Configure and build with CMake + MuPDF
         shell: bash
         run: |
           set -e
 
-          QT_ANDROID_BIN=$(find / -name qt-cmake -path "*android*" 2>/dev/null | head -n 1)
+          QT_ANDROID_BIN=$(find "$QT_ROOT_DIR" -name qt-cmake -type f | head -n 1)
 
           MUPDF_LIB=$(find "$(pwd)/mupdf-src/build" \
             -name libmupdf.a | head -n 1)
@@ -138,13 +155,13 @@ jobs:
 
           cmake --build build-android --parallel
 
-      # 10. Gerar APK
+      # 11. Gerar APK
       - name: Package APK with androiddeployqt
         shell: bash
         run: |
           set -e
 
-          ANDROIDDEPLOYQT=$(find / -name androiddeployqt 2>/dev/null | head -n 1)
+          ANDROIDDEPLOYQT=$(find "$QT_ROOT_DIR" -name androiddeployqt -type f | head -n 1)
 
           if [ -z "$ANDROIDDEPLOYQT" ]; then
             echo "ERROR: androiddeployqt not found."
@@ -156,7 +173,7 @@ jobs:
             --output build-android/apk-out \
             --apk
 
-      # 11. Disponibilizar APK
+      # 12. Disponibilizar APK
       - name: Upload APK artifact
         uses: actions/upload-artifact@v4
         with:
