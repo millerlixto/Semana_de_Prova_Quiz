@@ -31,7 +31,7 @@ jobs:
         shell: bash
         run: |
           SDK_ROOT="${ANDROID_SDK_ROOT:-${ANDROID_HOME:-/usr/local/lib/android/sdk}}"
-          SDKMANAGER="$SDK_ROOT/cmdline-tools/latest/bin/sdkmanager"
+          SDKMANAGER=$(find "$SDK_ROOT" -path "*/bin/sdkmanager" -type f 2>/dev/null | head -n 1)
           yes | "$SDKMANAGER" --sdk_root="$SDK_ROOT" --licenses >/dev/null
           "$SDKMANAGER" --sdk_root="$SDK_ROOT" \
             "platforms;android-34" \
