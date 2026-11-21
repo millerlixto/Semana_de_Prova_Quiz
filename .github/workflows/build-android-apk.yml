@@ -12,26 +12,31 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
+      # 1. Baixar o projeto
       - name: Checkout repository
         uses: actions/checkout@v4
 
+      # 2. Instalar ferramentas Linux
       - name: Install build tools for MuPDF
         run: |
           sudo apt-get update
           sudo apt-get install -y build-essential git
 
+      # 3. Configurar Java
       - name: Set up JDK 17
         uses: actions/setup-java@v5
         with:
           distribution: temurin
           java-version: "17"
 
+      # 4. Configurar Android SDK
       - name: Set up Android SDK
         uses: android-actions/setup-android@v4
         with:
           packages: platform-tools
           accept-android-sdk-licenses: true
 
+      # 5. Instalar Android API e NDK
       - name: Install Android SDK and NDK packages
         shell: bash
         run: |
@@ -51,6 +56,7 @@ jobs:
           echo "ANDROID_NDK_ROOT=$SDK_ROOT/ndk/26.1.10909125" >> "$GITHUB_ENV"
           echo "ANDROID_NDK_HOME=$SDK_ROOT/ndk/26.1.10909125" >> "$GITHUB_ENV"
 
+      # 6. Baixar e compilar MuPDF
       - name: Build MuPDF for Android arm64-v8a
         shell: bash
         run: |
@@ -80,18 +86,27 @@ jobs:
 
           echo "MuPDF build completed."
 
+      # 7. Configurar Python compatível com a instalação do Qt
+      - name: Set up Python for Qt installer
+        uses: actions/setup-python@v6
+        with:
+          python-version: "3.13"
+
+      # 8. Instalar Qt para Android ARM64
       - name: Install Qt for Android
         uses: jurplel/install-qt-action@v4
         with:
           version: "6.7.3"
           host: linux
           target: android
-          archives: qtbase qtdeclarative
-          modules: qtshadertools qtsvg
-          android-abis: arm64-v8a
-          aqtinstall-args: "--external"
-          extra: "--email ${{ secrets.QT_ACCOUNT }} --pw ${{ secrets.QT_PASSWORD }}"
+          arch: android_arm64_v8a
+          archives: "qtbase qtdeclarative"
+          modules: "qtshadertools qtsvg"
+          aqtversion: "==3.3.0"
+          setup-python: false
+          cache: true
 
+      # 9. Configurar e compilar o projeto
       - name: Configure and build with CMake + MuPDF
         shell: bash
         run: |
@@ -112,6 +127,9 @@ jobs:
             exit 1
           fi
 
+          echo "Qt CMake: $QT_ANDROID_BIN"
+          echo "MuPDF library: $MUPDF_LIB"
+
           "$QT_ANDROID_BIN" -S . -B build-android \
             -DANDROID_ABI=arm64-v8a \
             -DENABLE_MUPDF=ON \
@@ -120,6 +138,7 @@ jobs:
 
           cmake --build build-android --parallel
 
+      # 10. Gerar APK
       - name: Package APK with androiddeployqt
         shell: bash
         run: |
@@ -137,6 +156,7 @@ jobs:
             --output build-android/apk-out \
             --apk
 
+      # 11. Disponibilizar APK
       - name: Upload APK artifact
         uses: actions/upload-artifact@v4
         with:
