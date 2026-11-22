@@ -367,7 +367,7 @@ jobs:
           echo "androiddeployqt: $ANDROIDDEPLOYQT"
           echo "Android platform: android-34"
 
-          "$ANDROIDDEPLOYQT" --help | grep -A 2 -- "--android-platform"
+          "$ANDROIDDEPLOYQT" --help 2>&1 | grep -A 2 -- "--android-platform"
 
           echo "QT_ANDROID_BIN=$QT_ANDROID_BIN" >> "$GITHUB_ENV"
           echo "ANDROIDDEPLOYQT=$ANDROIDDEPLOYQT" >> "$GITHUB_ENV"
@@ -434,26 +434,23 @@ jobs:
       - name: Generate APK
         shell: bash
         run: |
-          set -euo pipefail
+          set -Eeuo pipefail
+
+          echo "Localizando androiddeployqt..."
 
           test -x "$ANDROIDDEPLOYQT"
-          test -f "$ANDROID_HOME/platforms/android-34/android.jar"
 
           DEPLOYMENT_FILE="$(
             find build-android \
-              -maxdepth 4 \
               -type f \
               -name "*deployment-settings.json" \
               -print -quit
           )"
 
           if [ -z "$DEPLOYMENT_FILE" ]; then
-            echo "ERRO: arquivo de deployment não encontrado."
+            echo "ERRO: deployment-settings.json não encontrado."
 
-            find build-android \
-              -maxdepth 5 \
-              -type f \
-              -print
+            find build-android -type f -print
 
             exit 1
           fi
@@ -462,52 +459,82 @@ jobs:
 
           export LD_LIBRARY_PATH="/usr/local/lib:$QT_GCC_LIB:${LD_LIBRARY_PATH:-}"
 
-          APK_DIR="$GITHUB_WORKSPACE/artifacts"
-          APK_DEST="$APK_DIR/GeminiQuiz-MuPDF-arm64.apk"
+          APK_OUTPUT="$GITHUB_WORKSPACE/build-android/apk-out"
+          APK_DEST="$GITHUB_WORKSPACE/artifacts/GeminiQuiz-MuPDF-arm64.apk"
 
-          mkdir -p "$APK_DIR"
+          mkdir -p "$APK_OUTPUT"
+          mkdir -p "$GITHUB_WORKSPACE/artifacts"
 
           rm -f "$APK_DEST"
 
           echo "Deployment: $DEPLOYMENT_FILE"
-          echo "Plataforma Android: android-34"
-          echo "Destino do APK: $APK_DEST"
+          echo "Android platform: android-34"
+          echo "APK output: $APK_OUTPUT"
 
-          echo "Gerando APK..."
+          echo "Verificando argumentos do androiddeployqt..."
+
+          "$ANDROIDDEPLOYQT" --help \
+            > /tmp/androiddeployqt-help.txt 2>&1
+
+          grep -q -- "--android-platform" \
+            /tmp/androiddeployqt-help.txt
+
+          echo "Argumentos validados."
+
+          echo "Iniciando geração do APK..."
 
           "$ANDROIDDEPLOYQT" \
             --input "$DEPLOYMENT_FILE" \
-            --output build-android/apk-out \
+            --output "$APK_OUTPUT" \
             --android-platform android-34 \
-            --apk "$APK_DEST"
+            --verbose
 
-          echo "Verificando APK gerado..."
+          echo "Procurando APK..."
 
-          if [ ! -s "$APK_DEST" ]; then
-            echo "ERRO: androiddeployqt não gerou o APK esperado."
+          mapfile -t APK_FILES < <(
+            find "$APK_OUTPUT" \
+              -type f \
+              -name "*.apk" \
+              -print \
+              | sort
+          )
 
-            echo "Arquivos encontrados:"
+          if [ "${#APK_FILES[@]}" -eq 0 ]; then
+            echo "ERRO: nenhum APK encontrado."
 
-            find build-android \
+            echo "Conteúdo da pasta de saída:"
+
+            find "$APK_OUTPUT" \
               -maxdepth 8 \
               -type f \
               -print
 
-            find artifacts \
-              -maxdepth 2 \
+            echo "Conteúdo do build:"
+
+            find build-android \
+              -maxdepth 5 \
               -type f \
+              -name "*.apk" \
               -print
 
             exit 1
           fi
 
-          echo "APK encontrado com sucesso!"
+          echo "APK(s) encontrado(s):"
+          printf '%s\n' "${APK_FILES[@]}"
+
+          cp "${APK_FILES[0]}" "$APK_DEST"
+
+          if [ ! -s "$APK_DEST" ]; then
+            echo "ERRO: APK copiado está vazio."
+            exit 1
+          fi
+
+          echo "APK gerado com sucesso!"
 
           ls -lh "$APK_DEST"
 
           file "$APK_DEST"
-
-          echo "APK pronto para publicação."
 
       # --------------------------------------------------
       # 14. Publicar APK
