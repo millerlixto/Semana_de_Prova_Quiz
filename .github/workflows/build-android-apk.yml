@@ -138,7 +138,7 @@ jobs:
           test -x "$TOOLCHAIN/aarch64-linux-android24-clang"
 
           echo "Android NDK: $NDK"
-          echo "Compilador ARM64:"
+
           "$TOOLCHAIN/aarch64-linux-android24-clang" --version
 
           cd mupdf-src
@@ -429,7 +429,7 @@ jobs:
           echo "Compilação concluída!"
 
       # --------------------------------------------------
-      # 13. Gerar APK
+      # 13. Gerar APK - CORRIGIDO
       # --------------------------------------------------
       - name: Generate APK
         shell: bash
@@ -462,45 +462,50 @@ jobs:
 
           export LD_LIBRARY_PATH="/usr/local/lib:$QT_GCC_LIB:${LD_LIBRARY_PATH:-}"
 
+          APK_DIR="$GITHUB_WORKSPACE/artifacts"
+          APK_DEST="$APK_DIR/GeminiQuiz-MuPDF-arm64.apk"
+
+          mkdir -p "$APK_DIR"
+
+          rm -f "$APK_DEST"
+
           echo "Deployment: $DEPLOYMENT_FILE"
-          echo "Plataforma Android selecionada: android-34"
+          echo "Plataforma Android: android-34"
+          echo "Destino do APK: $APK_DEST"
+
           echo "Gerando APK..."
 
-          # CORREÇÃO:
-          # Impede o androiddeployqt de selecionar android-36-ext19.
           "$ANDROIDDEPLOYQT" \
             --input "$DEPLOYMENT_FILE" \
             --output build-android/apk-out \
             --android-platform android-34 \
-            --apk
+            --apk "$APK_DEST"
 
-          mapfile -t APK_FILES < <(
-            find build-android/apk-out \
+          echo "Verificando APK gerado..."
+
+          if [ ! -s "$APK_DEST" ]; then
+            echo "ERRO: androiddeployqt não gerou o APK esperado."
+
+            echo "Arquivos encontrados:"
+
+            find build-android \
+              -maxdepth 8 \
               -type f \
-              -name "*.apk" \
-              | sort
-          )
+              -print
 
-          if [ "${#APK_FILES[@]}" -eq 0 ]; then
-            echo "ERRO: nenhum APK foi gerado."
-
-            find build-android/apk-out \
-              -maxdepth 7 \
+            find artifacts \
+              -maxdepth 2 \
               -type f \
               -print
 
             exit 1
           fi
 
-          echo "APK(s) encontrado(s):"
-          printf '%s\n' "${APK_FILES[@]}"
+          echo "APK encontrado com sucesso!"
 
-          mkdir -p artifacts
+          ls -lh "$APK_DEST"
 
-          cp "${APK_FILES[0]}" \
-            artifacts/GeminiQuiz-MuPDF-arm64.apk
-
-          test -s artifacts/GeminiQuiz-MuPDF-arm64.apk
+          file "$APK_DEST"
 
           echo "APK pronto para publicação."
 
