@@ -1,34 +1,85 @@
+
 name: Build Android APK (MuPDF + Gemini Quiz)
 
 on:
   workflow_dispatch:
   push:
-    branches: [ "main" ]
+    branches: ["main"]
+
+permissions:
+  contents: read
 
 jobs:
   build-apk:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-22.04
+    timeout-minutes: 120
 
     steps:
+      # --------------------------------------------------
+      # 1. Baixar projeto
+      # --------------------------------------------------
       - name: Checkout repository
         uses: actions/checkout@v4
 
+      # --------------------------------------------------
+      # 2. Dependências Linux
+      # --------------------------------------------------
       - name: Install build dependencies
+        shell: bash
         run: |
-          sudo apt-get update
-          sudo apt-get install -y build-essential git cmake ninja-build curl libgl1-mesa-dev
+          set -euo pipefail
 
+          sudo apt-get update
+
+          sudo apt-get install -y \
+            build-essential \
+            git \
+            cmake \
+            ninja-build \
+            curl \
+            wget \
+            tar \
+            perl \
+            python3 \
+            pkg-config \
+            libgl1-mesa-dev \
+            libxkbcommon-dev \
+            libx11-dev \
+            libx11-xcb-dev \
+            libxcb1-dev \
+            libxcb-cursor0 \
+            libxcb-icccm4-dev \
+            libxcb-image0-dev \
+            libxcb-keysyms1-dev \
+            libxcb-randr0-dev \
+            libxcb-render-util0-dev \
+            libxcb-shape0-dev \
+            libxcb-shm0-dev \
+            libxcb-sync-dev \
+            libxcb-xfixes0-dev \
+            libxcb-xinerama0-dev \
+            libxcb-xkb-dev
+
+      # --------------------------------------------------
+      # 3. Java 17
+      # --------------------------------------------------
       - name: Set up Java
         uses: actions/setup-java@v5
         with:
           distribution: temurin
           java-version: "17"
 
+      # --------------------------------------------------
+      # 4. Android SDK e NDK
+      # --------------------------------------------------
       - name: Set up Android SDK
         uses: android-actions/setup-android@v4
 
       - name: Install Android SDK packages
+        shell: bash
         run: |
+          set -euo pipefail
+
           sdkmanager --install \
             "platform-tools" \
             "platforms;android-34" \
@@ -39,40 +90,203 @@ jobs:
           echo "ANDROID_NDK_ROOT=$ANDROID_HOME/ndk/26.1.10909125" >> "$GITHUB_ENV"
           echo "ANDROID_NDK_HOME=$ANDROID_HOME/ndk/26.1.10909125" >> "$GITHUB_ENV"
 
+      # --------------------------------------------------
+      # 5. Baixar MuPDF e submódulos
+      # --------------------------------------------------
       - name: Clone MuPDF
+        shell: bash
         run: |
+          set -euo pipefail
+
           git clone --depth 1 --recurse-submodules \
-            https://github.com/ArtifexSoftware/mupdf.git mupdf-src
+            https://github.com/ArtifexSoftware/mupdf.git \
+            mupdf-src
 
-      - name: Build MuPDF for Android
-        working-directory: mupdf-src
+          cd mupdf-src
+
+          git submodule update --init --recursive
+
+          echo "MuPDF baixado."
+          git log -1 --oneline
+
+      # --------------------------------------------------
+      # 6. Compilar MuPDF para Android ARM64
+      # --------------------------------------------------
+      - name: Build MuPDF for Android ARM64
+        shell: bash
         run: |
-          export NDK="$ANDROID_NDK_ROOT"
-          export ANDROID_NDK="$ANDROID_NDK_ROOT"
-          export PATH="$NDK/toolchains/llvm/prebuilt/linux-x86_64/bin:$PATH"
+          set -euo pipefail
 
-          make clean || true
-          make -j"$(nproc)" \
-            build=release \
-            OS=Android \
-            ARCH=arm64 \
-            CROSS_COMPILE=aarch64-linux-android- \
-            CC="aarch64-linux-android24-clang -fPIC" \
-            XCFLAGS="-fPIC" \
-            AR=llvm-ar \
-            RANLIB=llvm-ranlib \
-            USE_SYSTEM_LIBS=no \
-            libs
+          NDK="$ANDROID_NDK_ROOT"
+          TOOLCHAIN="$NDK/toolchains/llvm/prebuilt/linux-x86_64/bin"
+          NDK_BUILD="$NDK/ndk-build"
 
-          find build -name "libmupdf.a" -print
+          export PATH="$TOOLCHAIN:$PATH"
 
-          test -f build/release/libmupdf.a
+          LLVM_AR="$TOOLCHAIN/llvm-ar"
+          LLVM_RANLIB="$TOOLCHAIN/llvm-ranlib"
+          LLVM_READELF="$TOOLCHAIN/llvm-readelf"
 
+          test -x "$NDK_BUILD"
+          test -x "$LLVM_AR"
+          test -x "$LLVM_RANLIB"
+          test -x "$LLVM_READELF"
+          test -x "$TOOLCHAIN/aarch64-linux-android24-clang"
+
+          echo "Android NDK: $NDK"
+          echo "Compilador ARM64:"
+          "$TOOLCHAIN/aarch64-linux-android24-clang" --version
+
+          cd mupdf-src
+
+          # Gera os arquivos necessários do MuPDF.
+          echo "Gerando arquivos do MuPDF..."
+
+          make generate
+
+          # Limpa resultados anteriores.
+          rm -rf build/android
+          rm -rf build/android-arm64
+
+          mkdir -p build/android
+
+          echo "Compilando MuPDF com Android.mk oficial..."
+
+          "$NDK_BUILD" -j"$(nproc)" \
+            APP_BUILD_SCRIPT="$PWD/platform/java/Android.mk" \
+            APP_PROJECT_PATH="$PWD/build/android" \
+            APP_PLATFORM=android-24 \
+            APP_ABI=arm64-v8a \
+            APP_OPTIM=release \
+            APP_STL=c++_shared \
+            NDK_OUT="$PWD/build/android/obj" \
+            NDK_LIBS_OUT="$PWD/build/android/libs"
+
+          # Diretório de saída das bibliotecas.
+          OBJ_DIR="$PWD/build/android/obj/local/arm64-v8a"
+
+          echo "Verificando bibliotecas geradas..."
+
+          test -d "$OBJ_DIR"
+          test -f "$OBJ_DIR/libmupdf_core.a"
+
+          find "$OBJ_DIR" \
+            -maxdepth 1 \
+            -type f \
+            -name "libmupdf*.a" \
+            -print
+
+          # ------------------------------------------------
+          # Função para validar a arquitetura dos objetos.
+          # ------------------------------------------------
+
+          validate_archive() {
+            local archive="$1"
+            local member_count
+            local arm64_count
+
+            member_count=$(
+              "$LLVM_AR" t "$archive" |
+              awk 'NF { count++ } END { print count + 0 }'
+            )
+
+            arm64_count=$(
+              "$LLVM_READELF" -h "$archive" 2>/dev/null |
+              grep -c "Machine:.*AArch64" || true
+            )
+
+            echo "Arquivo: $(basename "$archive")"
+            echo "Objetos: $member_count"
+            echo "Objetos ARM64: $arm64_count"
+
+            if [ "$member_count" -eq 0 ]; then
+              echo "ERRO: biblioteca sem objetos: $archive"
+              return 1
+            fi
+
+            if [ "$member_count" -ne "$arm64_count" ]; then
+              echo "ERRO: arquitetura incompatível em: $archive"
+              return 1
+            fi
+          }
+
+          # ------------------------------------------------
+          # Validar cada biblioteca antes da agregação.
+          # ------------------------------------------------
+
+          echo "Validando bibliotecas individuais..."
+
+          mapfile -t MUPDF_ARCHIVES < <(
+            find "$OBJ_DIR" \
+              -maxdepth 1 \
+              -type f \
+              -name "libmupdf*.a" \
+              | sort
+          )
+
+          if [ "${#MUPDF_ARCHIVES[@]}" -lt 2 ]; then
+            echo "ERRO: bibliotecas estáticas do MuPDF incompletas."
+            exit 1
+          fi
+
+          for lib in "${MUPDF_ARCHIVES[@]}"; do
+            validate_archive "$lib"
+          done
+
+          # ------------------------------------------------
+          # Agregar bibliotecas estáticas.
+          # ------------------------------------------------
+
+          MUPDF_DIR="$PWD/build/android-arm64"
+
+          mkdir -p "$MUPDF_DIR"
+
+          MUPDF_LIB="$MUPDF_DIR/libmupdf.a"
+
+          echo "Bibliotecas que serão reunidas:"
+          printf '%s\n' "${MUPDF_ARCHIVES[@]}"
+
+          rm -f "$MUPDF_LIB"
+
+          {
+            printf 'CREATE %s\n' "$MUPDF_LIB"
+
+            for lib in "${MUPDF_ARCHIVES[@]}"; do
+              printf 'ADDLIB %s\n' "$lib"
+            done
+
+            printf 'SAVE\n'
+            printf 'END\n'
+
+          } | "$LLVM_AR" -M
+
+          "$LLVM_RANLIB" "$MUPDF_LIB"
+
+          test -s "$MUPDF_LIB"
+
+          # ------------------------------------------------
+          # Validar biblioteca agregada.
+          # ------------------------------------------------
+
+          echo "Validando biblioteca MuPDF agregada..."
+
+          validate_archive "$MUPDF_LIB"
+
+          echo "MuPDF ARM64 compilado e validado."
+
+          echo "MUPDF_LIBRARY=$MUPDF_LIB" >> "$GITHUB_ENV"
+
+      # --------------------------------------------------
+      # 7. Python
+      # --------------------------------------------------
       - name: Set up Python
         uses: actions/setup-python@v5
         with:
           python-version: "3.13"
 
+      # --------------------------------------------------
+      # 8. Instalar Qt 6.7.3 para Android
+      # --------------------------------------------------
       - name: Install Qt for Android
         uses: jurplel/install-qt-action@v4.4.1
         with:
@@ -87,96 +301,225 @@ jobs:
           cache: false
           install-deps: true
 
-      - name: Install ICU 73 libraries for Qt host tools
+      # --------------------------------------------------
+      # 9. Compilar ICU 73.2 para ferramentas Qt Host
+      # --------------------------------------------------
+      - name: Build and install ICU 73.2
         shell: bash
         run: |
-          mkdir -p /tmp/icu73/extracted
-          DEB_NAME=$(
-            curl -fsSL http://archive.ubuntu.com/ubuntu/pool/main/i/icu/ \
-              | grep -oE 'libicu73_73\.[0-9]+-[0-9]+ubuntu[0-9.]+_amd64\.deb' \
-              | sort -V \
-              | tail -n 1
-          )
-          test -n "$DEB_NAME"
-          echo "Baixando pacote ICU 73: $DEB_NAME"
-          curl -fsSL "http://archive.ubuntu.com/ubuntu/pool/main/i/icu/${DEB_NAME}" -o /tmp/icu73/libicu73.deb
-          dpkg-deb -x /tmp/icu73/libicu73.deb /tmp/icu73/extracted
-          sudo cp -a /tmp/icu73/extracted/usr/lib/x86_64-linux-gnu/libicu*.so.73* /usr/local/lib/
-          sudo ldconfig
-          ls -la /usr/local/lib/libicui18n.so.73*
+          set -euo pipefail
 
+          mkdir -p /tmp/icu73
+          cd /tmp/icu73
+
+          echo "Baixando ICU 73.2..."
+
+          curl -fSL --retry 3 \
+            https://github.com/unicode-org/icu/releases/download/release-73-2/icu4c-73_2-src.tgz \
+            -o icu4c-73_2-src.tgz
+
+          tar -xzf icu4c-73_2-src.tgz
+
+          cd icu/source
+
+          echo "Configurando ICU..."
+
+          ./configure \
+            --prefix=/usr/local \
+            --enable-shared \
+            --disable-static
+
+          echo "Compilando ICU..."
+
+          make -j"$(nproc)"
+
+          sudo make install
+          sudo ldconfig
+
+          test -f /usr/local/lib/libicuuc.so.73
+          test -f /usr/local/lib/libicui18n.so.73
+
+          echo "ICU 73.2 instalada."
+
+      # --------------------------------------------------
+      # 10. Verificar Qt e ferramentas Android
+      # --------------------------------------------------
       - name: Verify Qt installation
+        shell: bash
         run: |
+          set -euo pipefail
+
           echo "Qt root: $QT_ROOT_DIR"
           echo "Qt host: $QT_HOST_PATH"
 
-          if [ ! -d "$QT_ROOT_DIR" ]; then
-            echo "Erro: diretório do Qt não encontrado."
-            exit 1
-          fi
+          test -d "$QT_ROOT_DIR"
+          test -d "$QT_HOST_PATH"
 
-          find "$QT_ROOT_DIR" -name qt-cmake -type f
-          find "$QT_ROOT_DIR" -name androiddeployqt -type f
+          # qt-cmake deve ser procurado primeiro
+          # na instalação de destino Android.
+          QT_ANDROID_BIN="$(
+            find "$QT_ROOT_DIR" \
+                 "$QT_HOST_PATH" \
+              -name qt-cmake \
+              -type f \
+              -print -quit
+          )"
 
+          # androiddeployqt é uma ferramenta Host.
+          ANDROIDDEPLOYQT="$(
+            find "$QT_HOST_PATH" \
+                 "$QT_ROOT_DIR" \
+              -name androiddeployqt \
+              -type f \
+              -print -quit
+          )"
+
+          test -n "$QT_ANDROID_BIN"
+          test -n "$ANDROIDDEPLOYQT"
+          test -x "$QT_ANDROID_BIN"
+          test -x "$ANDROIDDEPLOYQT"
+
+          echo "qt-cmake: $QT_ANDROID_BIN"
+          echo "androiddeployqt: $ANDROIDDEPLOYQT"
+
+          echo "QT_ANDROID_BIN=$QT_ANDROID_BIN" >> "$GITHUB_ENV"
+          echo "ANDROIDDEPLOYQT=$ANDROIDDEPLOYQT" >> "$GITHUB_ENV"
+
+      # --------------------------------------------------
+      # 11. Configurar CMake
+      # --------------------------------------------------
       - name: Configure project with CMake
+        shell: bash
         run: |
-          QT_ANDROID_BIN=$(find "$QT_ROOT_DIR" -name qt-cmake -type f | head -n 1)
-          QT_GCC_LIB=$(find / -path "*6.7.3/gcc_64/lib" -type d 2>/dev/null | head -n 1)
-          export LD_LIBRARY_PATH="/usr/local/lib:${QT_GCC_LIB}:${LD_LIBRARY_PATH}"
+          set -euo pipefail
 
-          MUPDF_LIB=$(find "$(pwd)/mupdf-src/build" -name libmupdf.a | head -n 1)
+          QT_GCC_LIB="$QT_HOST_PATH/lib"
 
-          if [ -z "$QT_ANDROID_BIN" ]; then
-            echo "Erro: qt-cmake não encontrado."
-            exit 1
-          fi
+          export LD_LIBRARY_PATH="/usr/local/lib:$QT_GCC_LIB:${LD_LIBRARY_PATH:-}"
 
-          if [ -z "$MUPDF_LIB" ]; then
-            echo "Erro: libmupdf.a não encontrada."
-            exit 1
-          fi
+          MUPDF_LIB="$MUPDF_LIBRARY"
+          MUPDF_INCLUDE="$GITHUB_WORKSPACE/mupdf-src/include"
 
-          echo "Usando qt-cmake: $QT_ANDROID_BIN"
-          echo "Usando MuPDF: $MUPDF_LIB"
+          test -x "$QT_ANDROID_BIN"
+          test -f "$MUPDF_LIB"
+          test -f "$MUPDF_INCLUDE/mupdf/fitz.h"
+
+          echo "Qt Android: $QT_ANDROID_BIN"
+          echo "Qt Host: $QT_HOST_PATH"
+          echo "MuPDF include: $MUPDF_INCLUDE"
+          echo "MuPDF library: $MUPDF_LIB"
 
           "$QT_ANDROID_BIN" \
             -S . \
             -B build-android \
             -DANDROID_ABI=arm64-v8a \
+            -DANDROID_PLATFORM=android-24 \
             -DENABLE_MUPDF=ON \
-            -DMUPDF_INCLUDE_DIR="$(pwd)/mupdf-src/include" \
+            -DMUPDF_INCLUDE_DIR="$MUPDF_INCLUDE" \
             -DMUPDF_LIBRARY="$MUPDF_LIB"
 
+          echo "CMake configurado."
+
+      # --------------------------------------------------
+      # 12. Compilar aplicativo Android
+      # --------------------------------------------------
       - name: Build Android project
+        shell: bash
         run: |
-          QT_GCC_LIB=$(find / -path "*6.7.3/gcc_64/lib" -type d 2>/dev/null | head -n 1)
-          export LD_LIBRARY_PATH="/usr/local/lib:${QT_GCC_LIB}:${LD_LIBRARY_PATH}"
-          cmake --build build-android --parallel
+          set -euo pipefail
 
+          QT_GCC_LIB="$QT_HOST_PATH/lib"
+
+          export LD_LIBRARY_PATH="/usr/local/lib:$QT_GCC_LIB:${LD_LIBRARY_PATH:-}"
+
+          echo "Compilando projeto Android..."
+
+          cmake --build build-android \
+            --parallel "$(nproc)"
+
+          echo "Compilação concluída!"
+
+      # --------------------------------------------------
+      # 13. Gerar APK
+      # --------------------------------------------------
       - name: Generate APK
+        shell: bash
         run: |
-          ANDROIDDEPLOYQT=$(find "$QT_ROOT_DIR" -name androiddeployqt -type f | head -n 1)
+          set -euo pipefail
 
-          if [ -z "$ANDROIDDEPLOYQT" ]; then
-            echo "Erro: androiddeployqt não encontrado."
+          test -x "$ANDROIDDEPLOYQT"
+
+          # Localiza o JSON de deployment gerado pelo Qt.
+          DEPLOYMENT_FILE="$(
+            find build-android \
+              -maxdepth 4 \
+              -type f \
+              -name "*deployment-settings.json" \
+              -print -quit
+          )"
+
+          if [ -z "$DEPLOYMENT_FILE" ]; then
+            echo "ERRO: arquivo de deployment não encontrado."
+
+            find build-android \
+              -maxdepth 5 \
+              -type f \
+              -print
+
             exit 1
           fi
 
-          if [ ! -f build-android/android-quiz_frontend-deployment-settings.json ]; then
-            echo "Erro: arquivo de deployment do Android não encontrado."
-            echo "Arquivos disponíveis:"
-            find build-android -maxdepth 3 -type f
-            exit 1
-          fi
+          QT_GCC_LIB="$QT_HOST_PATH/lib"
+
+          export LD_LIBRARY_PATH="/usr/local/lib:$QT_GCC_LIB:${LD_LIBRARY_PATH:-}"
+
+          echo "Deployment: $DEPLOYMENT_FILE"
+          echo "Gerando APK..."
 
           "$ANDROIDDEPLOYQT" \
-            --input build-android/android-quiz_frontend-deployment-settings.json \
+            --input "$DEPLOYMENT_FILE" \
             --output build-android/apk-out \
             --apk
 
+          # Localiza os APKs gerados.
+          mapfile -t APK_FILES < <(
+            find build-android/apk-out \
+              -type f \
+              -name "*.apk" \
+              | sort
+          )
+
+          if [ "${#APK_FILES[@]}" -eq 0 ]; then
+            echo "ERRO: nenhum APK foi gerado."
+
+            find build-android/apk-out \
+              -maxdepth 7 \
+              -type f \
+              -print
+
+            exit 1
+          fi
+
+          echo "APK(s) encontrado(s):"
+          printf '%s\n' "${APK_FILES[@]}"
+
+          # Copia o primeiro APK para uma pasta fixa.
+          mkdir -p artifacts
+
+          cp "${APK_FILES[0]}" \
+            artifacts/GeminiQuiz-MuPDF-arm64.apk
+
+          test -s artifacts/GeminiQuiz-MuPDF-arm64.apk
+
+          echo "APK pronto para publicação."
+
+      # --------------------------------------------------
+      # 14. Publicar APK
+      # --------------------------------------------------
       - name: Upload APK
         uses: actions/upload-artifact@v4
         with:
           name: gemini-quiz-mupdf-apk
-          path: build-android/apk-out/build/outputs/apk/debug/*.apk
+          path: artifacts/GeminiQuiz-MuPDF-arm64.apk
           if-no-files-found: error
+          retention-days: 14
