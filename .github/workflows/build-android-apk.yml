@@ -1,4 +1,3 @@
-
 name: Build Android APK (MuPDF + Gemini Quiz)
 
 on:
@@ -15,15 +14,11 @@ jobs:
     timeout-minutes: 120
 
     steps:
-      # --------------------------------------------------
       # 1. Baixar projeto
-      # --------------------------------------------------
       - name: Checkout repository
         uses: actions/checkout@v4
 
-      # --------------------------------------------------
       # 2. Dependências Linux
-      # --------------------------------------------------
       - name: Install build dependencies
         shell: bash
         run: |
@@ -60,18 +55,14 @@ jobs:
             libxcb-xinerama0-dev \
             libxcb-xkb-dev
 
-      # --------------------------------------------------
       # 3. Java 17
-      # --------------------------------------------------
       - name: Set up Java
         uses: actions/setup-java@v5
         with:
           distribution: temurin
           java-version: "17"
 
-      # --------------------------------------------------
       # 4. Android SDK e NDK
-      # --------------------------------------------------
       - name: Set up Android SDK
         uses: android-actions/setup-android@v4
 
@@ -94,9 +85,7 @@ jobs:
 
           echo "Android SDK 34 instalado e validado."
 
-      # --------------------------------------------------
       # 5. Baixar MuPDF e submódulos
-      # --------------------------------------------------
       - name: Clone MuPDF
         shell: bash
         run: |
@@ -113,9 +102,7 @@ jobs:
           echo "MuPDF baixado."
           git log -1 --oneline
 
-      # --------------------------------------------------
       # 6. Compilar MuPDF para Android ARM64
-      # --------------------------------------------------
       - name: Build MuPDF for Android ARM64
         shell: bash
         run: |
@@ -261,17 +248,13 @@ jobs:
 
           echo "MUPDF_LIBRARY=$MUPDF_LIB" >> "$GITHUB_ENV"
 
-      # --------------------------------------------------
       # 7. Python
-      # --------------------------------------------------
       - name: Set up Python
         uses: actions/setup-python@v5
         with:
           python-version: "3.13"
 
-      # --------------------------------------------------
       # 8. Instalar Qt 6.7.3 para Android
-      # --------------------------------------------------
       - name: Install Qt for Android
         uses: jurplel/install-qt-action@v4.4.1
         with:
@@ -286,9 +269,7 @@ jobs:
           cache: false
           install-deps: true
 
-      # --------------------------------------------------
-      # 9. Compilar ICU 73.2 para ferramentas Qt Host
-      # --------------------------------------------------
+      # 9. Compilar ICU 73.2
       - name: Build and install ICU 73.2
         shell: bash
         run: |
@@ -326,9 +307,7 @@ jobs:
 
           echo "ICU 73.2 instalada."
 
-      # --------------------------------------------------
       # 10. Verificar Qt e ferramentas Android
-      # --------------------------------------------------
       - name: Verify Qt installation
         shell: bash
         run: |
@@ -367,14 +346,23 @@ jobs:
           echo "androiddeployqt: $ANDROIDDEPLOYQT"
           echo "Android platform: android-34"
 
-          "$ANDROIDDEPLOYQT" --help 2>&1 | grep -A 2 -- "--android-platform"
+          # Capturar a ajuda sem interromper o workflow
+          # caso androiddeployqt retorne código 1.
+          "$ANDROIDDEPLOYQT" --help \
+            > /tmp/androiddeployqt-help-verify.txt 2>&1 || true
+
+          if ! grep -A 2 -- "--android-platform" \
+            /tmp/androiddeployqt-help-verify.txt; then
+
+            echo "ERRO: opção --android-platform não encontrada."
+            cat /tmp/androiddeployqt-help-verify.txt
+            exit 1
+          fi
 
           echo "QT_ANDROID_BIN=$QT_ANDROID_BIN" >> "$GITHUB_ENV"
           echo "ANDROIDDEPLOYQT=$ANDROIDDEPLOYQT" >> "$GITHUB_ENV"
 
-      # --------------------------------------------------
       # 11. Configurar CMake
-      # --------------------------------------------------
       - name: Configure project with CMake
         shell: bash
         run: |
@@ -396,7 +384,6 @@ jobs:
           echo "Qt Host: $QT_HOST_PATH"
           echo "MuPDF include: $MUPDF_INCLUDE"
           echo "MuPDF library: $MUPDF_LIB"
-          echo "Android compile platform: android-34"
 
           "$QT_ANDROID_BIN" \
             -S . \
@@ -409,9 +396,7 @@ jobs:
 
           echo "CMake configurado."
 
-      # --------------------------------------------------
       # 12. Compilar aplicativo Android
-      # --------------------------------------------------
       - name: Build Android project
         shell: bash
         run: |
@@ -428,9 +413,7 @@ jobs:
 
           echo "Compilação concluída!"
 
-      # --------------------------------------------------
-      # 13. Gerar APK - CORRIGIDO
-      # --------------------------------------------------
+      # 13. Gerar APK
       - name: Generate APK
         shell: bash
         run: |
@@ -449,9 +432,7 @@ jobs:
 
           if [ -z "$DEPLOYMENT_FILE" ]; then
             echo "ERRO: deployment-settings.json não encontrado."
-
             find build-android -type f -print
-
             exit 1
           fi
 
@@ -473,11 +454,18 @@ jobs:
 
           echo "Verificando argumentos do androiddeployqt..."
 
+          # Não usar pipeline com grep aqui:
+          # pipefail poderia interromper a execução.
           "$ANDROIDDEPLOYQT" --help \
-            > /tmp/androiddeployqt-help.txt 2>&1
+            > /tmp/androiddeployqt-help.txt 2>&1 || true
 
-          grep -q -- "--android-platform" \
-            /tmp/androiddeployqt-help.txt
+          if ! grep -q -- "--android-platform" \
+            /tmp/androiddeployqt-help.txt; then
+
+            echo "ERRO: androiddeployqt não anuncia --android-platform."
+            cat /tmp/androiddeployqt-help.txt
+            exit 1
+          fi
 
           echo "Argumentos validados."
 
@@ -533,12 +521,9 @@ jobs:
           echo "APK gerado com sucesso!"
 
           ls -lh "$APK_DEST"
-
           file "$APK_DEST"
 
-      # --------------------------------------------------
       # 14. Publicar APK
-      # --------------------------------------------------
       - name: Upload APK
         uses: actions/upload-artifact@v4
         with:
