@@ -77,6 +77,20 @@ jobs:
             "build-tools;34.0.0" \
             "ndk;26.1.10909125"
 
+          # Qt 6.7/androiddeployqt usa a plataforma mais alta disponível
+          # se --android-platform não for passado pelo target automático.
+          # Remova SDKs mais novos pré-instalados no runner para fixar API 34.
+          test -f "$ANDROID_HOME/platforms/android-34/android.jar"
+          find "$ANDROID_HOME/platforms" \
+            -mindepth 1 -maxdepth 1 -type d \
+            ! -name "android-34" \
+            -exec rm -rf {} +
+
+          echo "Plataformas Android disponíveis:"
+          find "$ANDROID_HOME/platforms" -mindepth 1 -maxdepth 1 -type d -print
+          test "$(find "$ANDROID_HOME/platforms" -mindepth 1 -maxdepth 1 -type d | wc -l)" -eq 1
+          test -f "$ANDROID_HOME/platforms/android-34/android.jar"
+
           echo "ANDROID_SDK_ROOT=$ANDROID_HOME" >> "$GITHUB_ENV"
           echo "ANDROID_NDK_ROOT=$ANDROID_HOME/ndk/26.1.10909125" >> "$GITHUB_ENV"
           echo "ANDROID_NDK_HOME=$ANDROID_HOME/ndk/26.1.10909125" >> "$GITHUB_ENV"
@@ -268,6 +282,34 @@ jobs:
           setup-python: false
           cache: false
           install-deps: true
+
+      # 8.1. Revalidar o SDK depois da instalação do Qt
+      # O instalador do Qt pode alterar/adicionar plataformas Android.
+      # Esta etapa precisa ocorrer antes da configuração e compilação do CMake.
+      - name: Enforce Android SDK API 34 after Qt installation
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          SDK="$ANDROID_HOME"
+
+          echo "Plataformas Android antes da limpeza:"
+          find "$SDK/platforms" -mindepth 1 -maxdepth 1 -type d -print
+
+          test -f "$SDK/platforms/android-34/android.jar"
+
+          find "$SDK/platforms" \
+            -mindepth 1 -maxdepth 1 -type d \
+            ! -name "android-34" \
+            -exec rm -rf {} +
+
+          echo "Plataformas Android após a limpeza:"
+          find "$SDK/platforms" -mindepth 1 -maxdepth 1 -type d -print
+
+          test "$(find "$SDK/platforms" -mindepth 1 -maxdepth 1 -type d | wc -l)" -eq 1
+          test -f "$SDK/platforms/android-34/android.jar"
+
+          echo "API 34 confirmada após a instalação do Qt."
 
       # 9. Compilar ICU 73.2
       - name: Build and install ICU 73.2
