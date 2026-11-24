@@ -482,17 +482,30 @@ jobs:
 
           export LD_LIBRARY_PATH="/usr/local/lib:$QT_GCC_LIB:${LD_LIBRARY_PATH:-}"
 
-          APK_OUTPUT="$GITHUB_WORKSPACE/build-android/apk-out"
+          # O CMake/Qt já prepara a estrutura android-build e copia
+          # a biblioteca .so para android-build/libs/arm64-v8a.
+          # Não usar uma pasta nova (apk-out), pois ela não contém o binário.
+          APK_OUTPUT="$GITHUB_WORKSPACE/build-android/android-build"
+          APP_BINARY="$APK_OUTPUT/libs/arm64-v8a/libquiz_frontend_arm64-v8a.so"
           APK_DEST="$GITHUB_WORKSPACE/artifacts/GeminiQuiz-MuPDF-arm64.apk"
 
-          mkdir -p "$APK_OUTPUT"
           mkdir -p "$GITHUB_WORKSPACE/artifacts"
+
+          echo "Verificando binário nativo preparado pelo CMake..."
+          if [ ! -s "$APP_BINARY" ]; then
+            echo "ERRO: biblioteca do aplicativo não encontrada: $APP_BINARY"
+            echo "Arquivos .so encontrados em build-android:"
+            find build-android -type f -name '*.so' -print
+            exit 1
+          fi
+          ls -lh "$APP_BINARY"
 
           rm -f "$APK_DEST"
 
           echo "Deployment: $DEPLOYMENT_FILE"
           echo "Android platform: android-34"
           echo "APK output: $APK_OUTPUT"
+          echo "Application binary: $APP_BINARY"
 
           echo "Verificando argumentos do androiddeployqt..."
 
@@ -523,6 +536,7 @@ jobs:
 
           mapfile -t APK_FILES < <(
             find "$APK_OUTPUT" \
+              -maxdepth 2 \
               -type f \
               -name "*.apk" \
               -print \
